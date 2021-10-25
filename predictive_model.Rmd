@@ -1,0 +1,233 @@
+---
+title: "Australia Bushfire Prediction"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library, include=FALSE, echo=FALSE}
+library(randomForest)
+library(httr)
+library(jsonlite)
+library(lubridate)
+library(dplyr)
+```
+
+
+
+Predicting the possibilities of a bushfire is one of the main aim of providing this dashboard. Given a probability of whether a bushfire is likely to occur near your place of residence, will provide sufficient time to make necessary arrangements to protect yourself, property and maybe wildlife. Here below, lies our predictive model, created and trained using a Random Forest machine learning algorithm, we are able provide the likelihood of bushfire occurrences. 
+
+To use our software, please type in the postcode of your residence in the specified format. Only an Australian postcode is accepted and if an invalid postcode is given, an error will occur. Once a valid postcode is provided, the model will return the likelihood of bushfires with the suburb name and date.
+
+
+```{r postcode_predictive_model, echo=FALSE}
+textInput(inputId = "postcode", label = "Postcode (E.g. 3168)", value = NULL, width = NULL, placeholder = NULL)
+actionButton("predictButton", "Predict", class = "btn-success")
+set.seed(123456) 
+#read bushfire data
+bushfire.omit = read.csv("bushfire.csv")
+#convert columns to the correct data type
+bushfire.omit = bushfire.omit[,!(names(bushfire.omit) %in% c("Date"))]
+bushfire.omit$Month = as.factor(bushfire.omit$Month)
+for (i in 1:ncol(bushfire.omit)){
+  if (class(bushfire.omit[,i]) == "character"){
+    bushfire.omit[,i] = as.factor(bushfire.omit[,i])
+  }
+  if (class(bushfire.omit[,i]) == "integer"){
+    bushfire.omit[,i] = as.numeric(bushfire.omit[,i])
+  }
+}
+train.row = sample(1:nrow(bushfire.omit), 0.7*nrow(bushfire.omit))
+bushfire.train = bushfire.omit[train.row,]
+bushfire.test = bushfire.omit[-train.row,]
+bushfire.fit.rf.ver2 = randomForest(Occurance ~ StateTerritory + MaxTemp + Month + WindDir9am + Temp3pm + Pressure9am + Humidity3pm ,data = bushfire.train, ntree = 90, mtry = 3)
+#read direction table
+directions = read.csv("directions.csv")
+directions$cardinal = as.factor(directions$cardinal)
+#----prediction----
+#this function allow users to enter an Australia postcode and returns the
+#forecast of weather metrics needed for the predictive model 
+#param: Australia postcode
+#return: data frame containing forecasted weather data and variables for the predictive model
+weather.forecast = function(postcode){
+  #if postcode is not valid, function return 0
+  if((is.na(as.numeric(postcode))) | (nchar(postcode) != 4)){
+    return(0)
+  }
+  #API call to get the State of the respective location
+  locationQuery = paste("http://v0.postcodeapi.com.au/suburbs/",postcode,".json", sep = "")
+  locRes = GET(locationQuery)
+  loc.api.data = fromJSON(rawToChar(locRes$content))
+  
+  #if API returns values, postcode is valid
+  #else postcode is not valid and function return 0
+  if(length(loc.api.data) != 0){
+    
+    #create factor data type
+    stateTerritory = as.factor(c("Australian Capital Territory", "New South Wales", "Northern Territory", 
+                                 "Queensland", "South Australia", "Tasmania", "Victoria", "Western Australia"))
+    month = as.factor(c(1,2,3,4,5,6,7,8,9,10,11,12))
+    
+    st = stateTerritory[stateTerritory == loc.api.data$state$name[1]]
+    
+    #query using the API
+    query = paste("http://api.openweathermap.org/data/2.5/forecast?appid=c2c972a8600b40eedf993d1041b66083&units=metric&zip=" ,postcode,",au", sep = "")
+    res = GET(query)
+    api.data = fromJSON(rawToChar(res$content))
+    
+    #get next day's forecast
+    #loop through the forecasts returned and identify the next day's index
+    for (i in 1:40) {
+      if (day(api.data$list[1,]$dt_txt) != day(api.data$list[i,]$dt_txt)){
+        target = i
+        break
+      }
+    }
+    
+    #create new data frame to store forecast observations
+    obs = data.frame(StateTerritory = st )
+    
+    #collect forecasted data for 3 day
+    
+    for (counter in 1:3){
+      #the API will provide forecast for every 3 hours, hence there should have 
+      #8 forecasts everyday hence this variable identifies the index of the last 
+      #forescast of the day
+      target.end = target + 7
+      
+      #get 9am and 3pm forecast values
+      forecast.9am = api.data$list[target+3,]
+      forecast.3pm = api.data$list[target+5,]
+      
+      #calculate max temp of the day
+      maxtemp = max(api.data$list[target:target.end,]$main$temp_max)
+      
+      #get the month of the date
+      m = month[month == month(forecast.9am$dt_txt)]
+      
+      #get wind direction
+      windDir = directions[forecast.9am$wind$deg >= directions$degree_min & forecast.9am$wind$deg < directions$degree_max,]$cardinal
+      
+      #get temp at 3pm
+      temp3pm = forecast.3pm$main$temp
+      
+      #get pressure at 9am
+      pressure9am = as.numeric(forecast.9am$main$pressure)
+      
+      #get humidity at 3pm
+      humidity3pm = as.numeric(forecast.3pm$main$humidity)
+      
+      #compile all values into a data frame
+      
+      #if this is the variable values for the first day
+      #create new columns for values
+      #if not, add the new values to the existing dataframe
+      if (length(obs) == 1){
+        obs$MaxTemp = maxtemp
+        obs$Month = m
+        obs$WindDir9am = windDir
+        obs$Temp3pm = temp3pm
+        obs$Pressure9am = pressure9am
+        obs$Humidity3pm = humidity3pm
+        obs$Location = api.data$city$name
+        obs$Date = as.Date(forecast.9am$dt_txt)
+      }
+      else{
+        new.obs = data.frame(StateTerritory = st )
+        new.obs$MaxTemp = maxtemp
+        new.obs$Month = m
+        new.obs$WindDir9am = windDir
+        new.obs$Temp3pm = temp3pm
+        new.obs$Pressure9am = pressure9am
+        new.obs$Humidity3pm = humidity3pm
+        new.obs$Location = api.data$city$name
+        new.obs$Date = as.Date(forecast.9am$dt_txt)
+        
+        obs = rbind(obs,new.obs )
+      }
+        
+      
+      
+      #set target index to the next day
+      target = target.end + 1
+    }
+    
+    
+    
+    #return the data frame
+    return(obs)
+  }
+  else{
+    #return 0 if input is not valid
+    return(0)
+  }
+  
+  
+}
+#use forecast data from API to predict fire occurance in Austarlia
+#param: Australian postcode
+#return: data frame with prediction result
+fire.prediction = function(postcode){
+  
+  #use forecast.value function to make API call
+  forecast.value = weather.forecast(postcode)
+  
+  #make prediction using predictive model
+  if(is.data.frame(forecast.value)){
+    prediction = predict(bushfire.fit.rf.ver2, forecast.value[1:7])
+    #create and format result table for output
+    result = cbind(forecast.value[1], forecast.value[8:9], Prediction = prediction)
+    colnames(result) = c("State/Territory", "Location", "Date","Prediction")
+    result$Prediction = as.character(result$Prediction)
+    
+    if (length(result[result$Prediction == "No",]$Prediction) != 0){
+      result[result$Prediction == "No",]$Prediction = "Low Chance"
+    }
+    if (length(result[result$Prediction == "Yes",]$Prediction) != 0){
+      result[result$Prediction == "Yes",]$Prediction = "High Chance"
+    }
+    
+    
+  }
+  
+  else{
+    result = "Invalid input (Please try again with a valid postcode)"
+    
+  }
+  
+  #return result table
+  result
+  return(result)
+  
+}
+
+# set the function of the button
+result <- eventReactive(input$predictButton, fire.prediction(input$postcode))
+
+# print the result
+renderPrint({
+  result()
+})
+  
+```
+
+
+
+Click the button below to access the visualize dashboard:
+
+```{r back-button, echo = FALSE}
+# A button to access the visualize dashboard
+
+actionButton(inputId = "backButton", label = "Back To Main Dashboard", icon = icon("angle-double-left"), onclick ="window.open('https://fit3164-team15-s2-2020.shinyapps.io/Dashboard')")
+
+
+```
+
+
+
+
+
+

@@ -1,0 +1,253 @@
+---
+title: "Australia Bushfire Analysis"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library, include=FALSE, echo=FALSE}
+# the library required for the code below
+# ggplot2 is a library to plot the graph
+# dplyr is library for data manipulation
+# ggmap, ozmaps, sf & lubridate are the library to plot the map
+library(ggplot2)
+library(dplyr)
+library(ggmap)
+library(ozmaps)
+library(sf)
+library(lubridate)
+```
+
+This dashboard provides information regarding Australia's temperature trends and bushfire occurrences as well as a predictive model to forecast the occurrences of bushfires in the near future in a link at the end of the dashboard. 
+
+The whole world is experiencing a change in its weather and climate in response to global warming not excluding Australia. Known to be one of the most fire-prone regions, Australia's dry and hot climate as well as having low relative humidity and strong winds, forms an excellent foundation for bushfires to occur and spread rapidly. This change has seen an increase in frequency of bushfire occurrences and its devastating impact on residences, wildlife, environment and property. Even though bushfires play an important role in permitting Australia's biodiversity and landscape to evolve, measures ought to be taken to minimise and reduce its impact on territories most vulnerable. 
+
+
+
+
+
+## Temperature Anomalies
+Temperature anomalies provide a better unit of comparison for temperature trends over a period of time than the absolute temperature. It represents the changes in temperature from a baseline temperature. A positive value indicates that the recorded temperatures was warmer than the baseline and a negative value will indicate that the observed temperature was cooler than the baseline. 
+
+The graph below represents Australia's surface air temperature anomalies from 1910 to 2019 with the temperature anomalies being calculated with respect to the baseline temperature between 1961 to 1990. From the graph, we can observe the year in which Australia's temperature has been increasingly warmer as compared to the baseline temperature. The highest mean temperature anomaly was recorded in Australia was in 2019. Apart from only observing values in Australia in general, we have the option to choose the specific states in which we would like to observe. From this graph, we are able to understand the trends in the temperatures of not only Australia but also each individual state in the country. 
+
+```{r temperature_anomalies, echo =FALSE}
+# Plot a temperature anomalies graph to show the anomaly of temperature in Australia over time
+# read the csv file and rename the column since the column name used is not meaningful 
+temp <- read.csv("AUanomalyfull.csv", header = T)
+colnames(temp) <- c("year", "mean_temp", "state")
+# change the character 'All' in the column state into 'Australia' to be more make sense when use the char in graph
+temp = temp %>% mutate(state = ifelse(as.character(state) == "All", "Australia", as.character(state)))
+# create new column which the contain is zero in order to plot the y-axis of graph is starting from 0
+temp$ystart=0
+# create a new column which if the mean temperature greater than 0 will be red; if smaller than zero will be blue
+temp$col=ifelse(temp$mean_temp>=0,"blue","red")
+
+# user input for the user to select the graph show by which state or whole Australia
+selectInput(inputId = "selectState", label = "State", choices = unique(temp$state), selected = c("Australia"), multiple = FALSE, selectize = TRUE, width = NULL, size = NULL)
+
+
+# filter the dataset according to the user input
+anomalies = reactive({
+  
+  return(temp[temp$state%in%input$selectState,])
+  
+  })
+
+
+# plot the graph and the graph will show in dashboard by putting all the code in 'readerPlot({})'
+# plot a line chart showing the temperature anomalies over time
+renderPlot({
+  
+  ggplot(data = anomalies(), mapping = aes(x = year, y = mean_temp)) +
+    geom_segment(data = anomalies() , mapping = aes(x=year,y=ystart,xend=year,
+                                           yend=mean_temp,color=col)) +
+    ggtitle(paste("Temperature Anomalies of", input$selectState)) + 
+    xlab("Year") + ylab("Mean Temperature") + 
+    labs(colour='Color') +
+    scale_color_hue(labels = c("Positive", "Negative")) + 
+    scale_x_continuous(limits=c(1910,2020), n.breaks = 10) + 
+    theme(axis.text.x = element_text(angle = 0))
+  
+})
+```
+
+## Bushfire Fatalities in Australia
+As Australia's temperatures become increasingly warmer, the occurrences of bushfires increase along with it. This brings about greater danger for humans, wildlife and property.  
+The graph below represents the number of documented human fatalities due to bushfires over time in Australia. In relation to graph on temperature anomalies, we can see that as temperatures get warmer, the number of bushfires resulting in human fatalities has increased as well. With the number of points on the graph getting denser over time. Although the number of deaths in each year is lesser than that of previous years, its frequency is increasing. This could be due to the advancement of technology which allows for people to access more information in relation to bushfires and how to protect themselves from it. However, this still represents a great danger to all human lives, and we should not be complacent about it. 
+
+```{r number_Death, echo=FALSE}
+# plot a graph to show the numbe of people death in the different year of bushfire
+# read the csv file, rename the column name & format the 'Date' column into date format. Format of column need to change since the class of the "Date" column is not in right format.
+history = read.csv("bushfire history.csv")
+colnames(history) = c("Date", "Death")
+history$Date = as.Date(history$Date, format = "%Y-%m-%d")
+
+
+# plot the graph and the graph will show in dashboard by putting all the code in 'readerPlot({})'
+# scatter plot representing the occurrences of bushfires that have human fatalities 
+renderPlot({
+  
+  ggplot(data = history, aes(x = Date, y = Death)) + 
+    geom_point(shape = 21, colour = "red", size = 5) + 
+    xlab("Year") + 
+    ylab("Number of Death") +
+    ggtitle("Bushfire Fatalities Over Time")
+  
+})
+```
+
+
+
+
+## Fire Hotspot in Different States of Australia
+There are countless of bushfires occurring in Australia throughout the years and each point on the map below captures the occurrence of it. From this, we can observe the areas with the most hotspots, filtering the map by different years and months. This map is created from a dataset that captures fire hotspot ranging from 2012 January to 2020 May. 
+
+```{r fire_hotspot_map, echo=FALSE}
+# plot a map to show the hotspot has captured in Australia by different time
+# read the csv file
+nasa.high <- read.csv("nasa.high.csv", header = T)
+
+
+# user input to select year and month they wish to observe the hot spot capture in Australia with certain time
+selectInput(inputId = "n_year", label = "Year", choices = c(2012:2020), selected = c(2012), multiple = FALSE, selectize = TRUE, width = NULL, size = NULL)
+
+selectInput(inputId = "n_month", label = "Month", choices = c("January" = 1, "February" = 2, "March" = 3, "April" = 4, "May" = 5, "June" = 6, "July" = 7, "August" = 8, "September" = 9,"October" = 10, "November" = 11, "December" = 12), selected = c(1), multiple = FALSE, selectize = TRUE, width = NULL, size = NULL)
+
+
+# plot the graph and the graph will show in dashboard by putting all the code in 'readerPlot({})'
+# plot a map with points representing different occurrences of fires
+renderPlot({
+  
+  oz_states <- ozmaps::ozmap_states
+  oz_states = oz_states[oz_states$NAME != "Other Territories",]
+  ggplot(oz_states) + geom_sf() + coord_sf() + 
+    geom_point(data = nasa.high[(year(nasa.high$acq_date) == as.character(input$n_year)) & (month(nasa.high$acq_date) == as.character(input$n_month)), ], mapping = aes(x = longitude, y = latitude), col = "red")
+  
+})
+```
+
+
+
+## Occurrence of Bushfire in Australia with Different Month
+The graph below aggregates the occurrences of bushfires in different month. Although Australia has no definitive period for bushfire season, but from this graph we can observe the months in which Australia experiences the highest number of bushfires. Not only that, we can observe it by different states as well ranging from 2013 to 2019. 
+
+```{r occurance_bushfire, echo=FALSE}
+# plot a graph to show the occurrence of bushfire, which month in Australia will have the most occurence of bushfire
+# read the csv file and format the 'Date' column into date format since the format of 'Date' is incorrect in the dataset
+bushfire <- read.csv("bushfire.csv")
+bushfire$Date <- as.Date(bushfire$Date, format("%Y-%m-%d"))
+
+# filter the occurance of bushfire with 'Yes' because we only want to know the number of bushfire
+occurance_bushfire <- bushfire[bushfire$Occurance == 'Yes',]
+
+# the date is filter because in the dataset, year 2012 and year 2020 have not contain the month 1-12
+occurance_bushfire <- occurance_bushfire[occurance_bushfire$Date >= "2013-01-01" & occurance_bushfire$Date <= "2019-12-31",]
+
+# aggregate the date to count the occurance of bushfire and group them by month and state of Australia
+occurance_bushfire = aggregate(cbind(count = Occurance) ~ Month + StateTerritory, data = occurance_bushfire, FUN = function(x){NROW(x)})
+
+# user input to select graph showing by which state or whole Australia 
+x = c("Australia")
+selectInput(inputId = "state", label = "State", choices = append(x, as.character(unique(occurance_bushfire$StateTerritory)), after = length(x)), selected = c("Australia"), multiple = FALSE, selectize = TRUE, width = NULL, size = NULL)
+
+
+# filter the data based on the user input and use it in the graph
+occurance = reactive({
+  
+  if (input$state == "Australia"){
+    return(occurance = occurance_bushfire)
+  }
+  else{
+    return(occurance_bushfire[occurance_bushfire$StateTerritory%in%input$state,])
+  }
+  
+  })
+
+
+# plot the graph and the graph will show in dashboard by putting all the code in 'readerPlot({})'
+# bar chart plot to show the count of bushfire occurrences by Months
+renderPlot({
+   
+  ggplot(data = occurance(), aes(x = Month, y = count)) +
+    geom_bar(stat='identity') + 
+    scale_x_continuous(breaks=1:12, labels=c("Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+                                             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")) +
+    ggtitle(paste("Occurrence of Bushfires in", input$state, "with Difference Month (2013-2019)"))
+  
+})
+```
+
+## Relationship Between Bushfire and Temperature
+To further improve on our understanding between the occurrence of bushfires and temperature, we have created a combined chart to visualise their relationship. 
+The graph below covers the bushfire occurrences and average maximum temperature recorded in Australia between 2019 June and 2020 May. We can observe that where temperatures are recorded to be high, the number of bushfire occurrences are high as well. It is easier to observe that high temperatures result in higher number of bushfires as it is a leading factor causing it. However, it is more difficult to distinguish whether the bushfires led to high temperatures. 
+
+```{r occurance_bushfire_VS_temp, echo = FALSE}
+# read the csv file and format the 'Date' column into date format
+bushfire <- read.csv("bushfire.csv")
+bushfire$Date <- as.Date(bushfire$Date, format("%Y-%m-%d"))
+
+# add a column to set the day to 1 for all date formate YY-MM-01
+bushfire <- bushfire %>% 
+  mutate(
+    year = update(Date, day=1)
+  )
+
+# filter the data to include only rows where there are occurrence of bushfires
+occurance_bf <- bushfire[bushfire$Occurance == 'Yes',]
+# filter the date range between "2019-06-01" and "2020-05-31"
+occurance_bf <- occurance_bf[occurance_bf$Date >= "2019-06-01" & occurance_bf$Date <= "2020-05-31",]
+# aggregate the date to count the occurance of bushfire and group them by year
+occurance_bf = aggregate(cbind(count= Occurance)~ year, data = occurance_bf, FUN = function(x){NROW(x)})
+
+# read the csv file and format the 'Date' column into date format
+weather <- read.csv("weatherAUS.csv")
+weather$Date <- as.Date(weather$Date, format("%Y-%m-%d"))
+# filter the date range between "2019-06-01" and "2020-05-31"
+weather <- weather[weather$Date >= "2019-06-01" & weather$Date <= "2020-05-31",]
+
+# copy weather data into another data frame, grouping by year and summarise the max temperature by the year
+group <- weather %>% 
+  mutate(year= update(Date, day=1), temp = MaxTemp) %>%
+  group_by(year) %>%
+  summarise(max_temp=max(temp, na.rm = TRUE), .groups = 'drop')
+
+#combine max temp data set (group) and bushfire occurrence data set for the purpose of plotting
+maxtempbf = merge(group, occurance_bf, by.x="year", by.y="year")
+
+
+# plot the graph and the graph will show in dashboard by putting all the code in 'readerPlot({})'
+# plot a bar chart that will represent the count of bushfire occurrence 
+# plot a line chart to show the maximum temperature 
+# both charts are plotted on the same graph, with dual y-axis 
+renderPlot({
+  
+  ggplot(data = maxtempbf) +
+  geom_bar(aes(x = year, y = count * 50 / 800), stat = 'identity') +
+  geom_point(aes(x = year, y= max_temp)) + 
+  geom_line(aes(x = year, y= max_temp), size = 1, colour = 'red') +
+  scale_y_continuous(name = expression("Temperature ("~degree~"C)"), sec.axis = sec_axis(~ . * 800 / 50 , name = "Occurence"), limits = c(0, 50)) +
+  ggtitle("Bushfire Occurrence VS Temperature")
+  
+})
+```
+
+
+Click the button to access the predictive model:
+
+```{r to-predict-button, echo = FALSE}
+# A button to access the predictive model
+
+actionButton(inputId = "toPredictButton", label = "Predictive Model", icon = icon("angle-double-right"), onclick ="window.open('https://fit3164-team15-s2-2020.shinyapps.io/predictive-model')")
+
+
+```
+
+
+
+
+
+
